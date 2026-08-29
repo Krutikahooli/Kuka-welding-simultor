@@ -8,11 +8,15 @@ import { Volume2, VolumeX, Zap, Radio } from 'lucide-react';
 const kinematics = new RobotKinematics();
 
 // Calibrated Natural Industrial Home Standby Pose (Folded ready pose)
-const HOME_COORDS = { x: 450.0, y: 0.0, z: 600.0 };
+const INITIAL_HOME_COORDS = { x: 450.0, y: 0.0, z: 600.0 };
 
 export default function App() {
-  const [targetPos, setTargetPos] = useState(HOME_COORDS);
-  const [dispPos, setDispPos] = useState(HOME_COORDS);
+  const [homeCoords, setHomeCoords] = useState(INITIAL_HOME_COORDS);
+  const homeCoordsRef = useRef(homeCoords);
+  homeCoordsRef.current = homeCoords;
+
+  const [targetPos, setTargetPos] = useState(INITIAL_HOME_COORDS);
+  const [dispPos, setDispPos] = useState(INITIAL_HOME_COORDS);
   const [jointAngles, setJointAngles] = useState({ A1: 0, A2: -26, A3: 94, A4: 0, A5: -68, A6: -108 });
 
   const [isPoweredOn, setIsPoweredOn] = useState(true);
@@ -167,8 +171,8 @@ export default function App() {
       setIsWelding(false);
       stopWeldSound();
       setAutoStepName('HOME STANDBY');
-      addLog('[CYCLE-ABORT] Automatic cycle halted. Moving robot to Standby Home (450, 0, 600)...');
-      setTargetPos(HOME_COORDS);
+      addLog(`[CYCLE-ABORT] Automatic cycle halted. Moving robot to Standby Home (${homeCoordsRef.current.x}, ${homeCoordsRef.current.y}, ${homeCoordsRef.current.z})...`);
+      setTargetPos(homeCoordsRef.current);
     } else {
       setIsAutoCycle(true);
       const activeShape = WORKPIECE_SHAPES[selectedShapeKey] || WORKPIECE_SHAPES.circle_pipe;
@@ -199,7 +203,7 @@ export default function App() {
     addLog(`KRL CMD: ${trimmed}`);
 
     if (trimmed.toUpperCase().includes('HOME')) {
-      setTargetPos(HOME_COORDS);
+      setTargetPos(homeCoordsRef.current);
       return 2000;
     }
 
@@ -279,7 +283,7 @@ export default function App() {
     setIsWelding(false);
     stopWeldSound();
     addLog('[KRL-HALT] KRL Program Aborted. Returning to Standby Home...');
-    setTargetPos(HOME_COORDS);
+    setTargetPos(homeCoordsRef.current);
   };
 
   const stepKrlScript = async () => {
@@ -446,6 +450,8 @@ export default function App() {
           clearLogs={() => setLogs([])}
           krlCode={krlCode}
           setKrlCode={setKrlCode}
+          homeCoords={homeCoords}
+          setHomeCoords={setHomeCoords}
           isScriptRunning={isScriptRunning}
           currentScriptLine={currentScriptLine}
           runKrlScript={runKrlScript}

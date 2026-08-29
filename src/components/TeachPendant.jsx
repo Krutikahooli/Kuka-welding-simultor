@@ -26,6 +26,8 @@ export default function TeachPendant({
   // Script Execution Engine Props
   krlCode,
   setKrlCode,
+  homeCoords,
+  setHomeCoords,
   isScriptRunning,
   currentScriptLine,
   runKrlScript,
@@ -34,18 +36,21 @@ export default function TeachPendant({
   loadKrlTemplate
 }) {
   const [activeTab, setActiveTab] = useState('motion'); // 'motion' | 'shapes' | 'code' | 'metals' | 'telemetry'
+  const [isSettingHome, setIsSettingHome] = useState(false);
   const activeMetal = METALS[selectedMetalKey] || METALS.carbon_steel;
   const activeShape = WORKPIECE_SHAPES[selectedShapeKey] || WORKPIECE_SHAPES.circle_pipe;
 
   // Calibrated Collision-Free Presets (Industrial Calibration)
+  // Calibrated Collision-Free Presets (Industrial Calibration)
   const presets = [
-    { label: 'P1: STANDBY HOME', x: 450, y: 0, z: 600 },
+    { label: 'P1: STANDBY HOME', x: homeCoords.x, y: homeCoords.y, z: homeCoords.z },
     { label: 'P2: HIGH APPROACH', x: 620, y: -72, z: 460 },
     { label: 'P3: SEAM SECTOR 0°', x: 620, y: -72, z: 298 },
     { label: 'P4: SEAM SECTOR 90°', x: 692, y: 0, z: 298 },
     { label: 'P5: SEAM SECTOR 180°', x: 620, y: 72, z: 298 },
     { label: 'P6: SEAM SECTOR 270°', x: 548, y: 0, z: 298 },
-    { label: 'P7: TORCH CLEAN STATION', x: 260, y: 380, z: 580 }
+    { label: 'P7: TORCH CLEAN STATION', x: 260, y: 380, z: 580 },
+    { label: 'P8: SET HOME POSITION', action: 'set_home' }
   ];
 
   // Calculate reach distance from shoulder pivot to detect max extension
@@ -143,6 +148,20 @@ export default function TeachPendant({
                   />
                 </div>
               ))}
+
+              {isSettingHome && (
+                <button
+                  onClick={() => {
+                    setHomeCoords({ x: targetPos.x, y: targetPos.y, z: targetPos.z });
+                    setIsSettingHome(false);
+                  }}
+                  disabled={!isPoweredOn}
+                  className="jog-btn"
+                  style={{ marginTop: '12px', width: '100%' }}
+                >
+                  💾 SAVE NEW HOME POSITION
+                </button>
+              )}
             </div>
 
             {/* Micro-Jog Step & Matrix */}
@@ -201,7 +220,14 @@ export default function TeachPendant({
                 {presets.map((pr) => (
                   <button
                     key={pr.label}
-                    onClick={() => onPreset(pr.x, pr.y, pr.z)}
+                    onClick={() => {
+                      if (pr.action === 'set_home') {
+                        setIsSettingHome(true);
+                      } else {
+                        onPreset(pr.x, pr.y, pr.z);
+                        setIsSettingHome(false);
+                      }
+                    }}
                     disabled={!isPoweredOn}
                     className="preset-btn"
                   >
