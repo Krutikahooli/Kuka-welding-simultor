@@ -363,8 +363,8 @@ function generateHexTrajectory() {
 export const WORKPIECE_SHAPES = {
   circle_pipe: {
     id: 'circle_pipe',
-    name: '⭕ Circular Pipe Collar',
-    subtitle: 'Outside Circumferential Weld (R=72mm)',
+    name: 'Circular Pipe Collar (ASME B31.3)',
+    subtitle: 'Outside Circumferential Fillet Weld (R=72mm)',
     desc: 'Continuous uniform-speed circular fillet weld around outer pipe perimeter.',
     pipeRadius: 64,
     seamRadius: 72,
@@ -389,7 +389,7 @@ END`
 
   square_box: {
     id: 'square_box',
-    name: '⏹️ Square Box Section',
+    name: 'Square Box Section (AWS D1.1)',
     subtitle: 'Outside 4-Corner Perimeter (140x140mm)',
     desc: 'Continuous uniform-speed 4-pass square contour fillet weld.',
     boxSize: 124,
@@ -415,7 +415,7 @@ END`
 
   t_fillet: {
     id: 't_fillet',
-    name: '📐 T-Joint Stiffener Gusset',
+    name: 'T-Joint Stiffener Gusset (ISO 9692)',
     subtitle: 'Dual Fillet Welds (L=200mm)',
     desc: 'Continuous uniform-speed structural dual fillet weld passes.',
     trajectory: generateTJointTrajectory(),
@@ -440,7 +440,7 @@ END`
 
   hex_flange: {
     id: 'hex_flange',
-    name: '🔷 Hexagonal Flange Collar',
+    name: 'Hexagonal Flange Collar (DIN 2501)',
     subtitle: '6-Sided Polygon (R=74mm)',
     desc: 'Continuous uniform-speed 6-sided hexagonal perimeter weld.',
     trajectory: generateHexTrajectory(),

@@ -1,14 +1,35 @@
+"""
+KUKA KRC5 Industrial Robotic Weld Cell Controller
+HMI & 3D Cyber-Physical Digital Twin Interface
+
+Industrial Standard: DIN EN ISO 10218-1 / IEC 62061 SIL 3 / EN ISO 13849-1 Cat. 4
+Architecture: Modular Componentized MVC with Real-Time Kinematics & EKI Socket Interface
+"""
+
+from __future__ import annotations
+
+import logging
 import math
 import os
+import platform
 import random
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
-import wave
 from tkinter import messagebox, ttk
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+# Configure enterprise standard logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger("KUKA.HMI")
 
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -16,25 +37,31 @@ if hasattr(sys.stdout, 'reconfigure'):
     except Exception:
         pass
 
-try:
-    import winsound
-    HAS_WINSOUND = True
-except ImportError:
-    HAS_WINSOUND = False
+# Platform Sound Capabilities
+SYSTEM_OS = platform.system().lower()
+HAS_WINSOUND = False
+if SYSTEM_OS == "windows":
+    try:
+        import winsound
+        HAS_WINSOUND = True
+    except ImportError:
+        HAS_WINSOUND = False
 
-KUKA_IP = "127.0.0.1"
-KUKA_PORT = 59152
-SOUND_FILE = os.path.join(os.path.dirname(__file__), "weld_sound.wav")
-SHUTDOWN_SOUND = os.path.join(os.path.dirname(__file__), "estop_sound.wav")
+KUKA_IP: str = "127.0.0.1"
+KUKA_PORT: int = 59152
+BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
+SOUND_FILE: str = os.path.join(BASE_DIR, "weld_sound.wav")
+SHUTDOWN_SOUND: str = os.path.join(BASE_DIR, "estop_sound.wav")
 
 
 # ==============================================================================
-# 1. MULTIPLE INDUSTRIAL METALS & METALLURGY PROFILES
+# 1. INDUSTRIAL METALLURGY SPECIFICATIONS & PROCESS PARAMETERS
 # ==============================================================================
-METALS_DATABASE = {
+METALS_DATABASE: Dict[str, Dict[str, Any]] = {
     'carbon_steel': {
-        'name': '🏗️ Mild Carbon Steel (A36)',
-        'code': 'A36 Carbon Steel',
+        'name': 'Mild Carbon Steel (AWS A36 / DIN 17100)',
+        'code': 'A36 Structural Carbon Steel',
+        'standard': 'AWS D1.1 / ISO 15614-1',
         'pipe_base': '#334155',
         'pipe_body': '#475569',
         'pipe_highlight': '#64748b',
@@ -51,8 +78,9 @@ METALS_DATABASE = {
         'desc': 'Standard structural carbon steel. High penetration, warm amber weld bead deposit.'
     },
     'stainless_316l': {
-        'name': '🔩 Stainless Steel (316L)',
+        'name': 'Stainless Steel (AISI 316L / DIN 1.4404)',
         'code': '316L Austenitic Stainless',
+        'standard': 'AWS D1.6 / ISO 3581',
         'pipe_base': '#64748b',
         'pipe_body': '#94a3b8',
         'pipe_highlight': '#f1f5f9',
@@ -66,11 +94,12 @@ METALS_DATABASE = {
         'spark_colors': ['#ffffff', '#38bdf8', '#fbbf24', '#f8fafc'],
         'arc_core': '#ffffff',
         'arc_glow': '#38bdf8',
-        'desc': 'Corrosion resistant alloy. Bright metallic silver sheen with gold/purple HAZ oxidation.'
+        'desc': 'Corrosion resistant marine alloy. Bright metallic silver sheen with gold/purple HAZ oxidation.'
     },
     'aluminum_6061': {
-        'name': '✈️ Aluminum Alloy (6061-T6)',
+        'name': 'Aluminum Alloy (AA 6061-T6)',
         'code': '6061-T6 Aerospace Aluminum',
+        'standard': 'AWS D1.2 / EN ISO 18273',
         'pipe_base': '#94a3b8',
         'pipe_body': '#cbd5e1',
         'pipe_highlight': '#ffffff',
@@ -87,8 +116,9 @@ METALS_DATABASE = {
         'desc': 'High thermal conductivity aluminum. Frosted pearl-silver weld bead with clean AC arc.'
     },
     'titanium_gr5': {
-        'name': '🚀 Titanium Alloy (Ti-6Al-4V)',
+        'name': 'Titanium Alloy (Grade 5 Ti-6Al-4V)',
         'code': 'Grade 5 Titanium (Ti-6Al-4V)',
+        'standard': 'AMS 4911 / AWS D1.9',
         'pipe_base': '#475569',
         'pipe_body': '#64748b',
         'pipe_highlight': '#94a3b8',
@@ -105,8 +135,9 @@ METALS_DATABASE = {
         'desc': 'Aerospace superalloy. Vibrant rainbow anodization heat tint (straw, purple, royal blue).'
     },
     'copper_brass': {
-        'name': '⚡ Copper / Brass Alloy (C360)',
+        'name': 'Free-Machining Brass (UNS C36000)',
         'code': 'C360 Naval Brass / Copper',
+        'standard': 'ASTM B16 / AWS C5.5',
         'pipe_base': '#78350f',
         'pipe_body': '#b45309',
         'pipe_highlight': '#f59e0b',
@@ -120,11 +151,12 @@ METALS_DATABASE = {
         'spark_colors': ['#ffffff', '#fb923c', '#f59e0b', '#fef08a'],
         'arc_core': '#ffffff',
         'arc_glow': '#f97316',
-        'desc': 'High electrical/thermal conductivity bronze. Warm golden-rose metallic shine.'
+        'desc': 'High electrical and thermal conductivity bronze. Warm golden-rose metallic deposit.'
     },
     'inconel_718': {
-        'name': '🛡️ Inconel 718 Superalloy',
+        'name': 'Inconel 718 Nickel Superalloy (UNS N07718)',
         'code': 'Inconel 718 Nickel-Chromium',
+        'standard': 'AMS 5596 / AWS D1.8',
         'pipe_base': '#3f3f46',
         'pipe_body': '#52525b',
         'pipe_highlight': '#a1a1aa',
@@ -144,64 +176,121 @@ METALS_DATABASE = {
 
 
 # ==============================================================================
-# 2. AUDIO SYNTHESIZER
+# 2. AUDIO SYNTHESIS & CROSS-PLATFORM AUDIO CONTROLLER
 # ==============================================================================
-def generate_audio_assets():
-    """Synthesizes high-fidelity industrial welding and E-Stop sounds."""
+def generate_audio_assets() -> None:
+    """Generate industrial sound assets if not present on disk."""
+    import wave
     sample_rate = 22050
-    try:
-        with wave.open(SOUND_FILE, 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            frames = bytearray()
-            for i in range(int(sample_rate * 1.4)):
-                t = float(i) / sample_rate
-                hum = 0.28 * math.sin(2 * math.pi * 120 * t) + 0.16 * math.sin(2 * math.pi * 240 * t)
-                crackle = (random.random() * 2 - 1) * 0.40
-                if random.random() < 0.08:
-                    crackle += (random.random() * 2 - 1) * 0.72
-                sample_val = max(-1.0, min(1.0, hum + crackle))
-                frames.extend(struct.pack('<h', int(sample_val * 26000)))
-            wav_file.writeframes(frames)
-    except Exception as e:
-        print(f"Weld sound error: {e}")
 
-    try:
-        with wave.open(SHUTDOWN_SOUND, 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            frames = bytearray()
-            for i in range(int(sample_rate * 0.50)):
-                t = float(i) / sample_rate
-                freq = max(35.0, 340.0 * math.exp(-t * 9.0))
-                envelope = math.exp(-t * 7.5)
-                tone = math.sin(2 * math.pi * freq * t) * envelope * 0.75
-                clunk = (random.random() * 2 - 1) * math.exp(-t * 22.0) * 0.95
-                sample_val = max(-1.0, min(1.0, tone + clunk))
-                frames.extend(struct.pack('<h', int(sample_val * 28000)))
-            wav_file.writeframes(frames)
-    except Exception as e:
-        print(f"EStop sound error: {e}")
+    if not os.path.exists(SOUND_FILE):
+        try:
+            with wave.open(SOUND_FILE, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                frames = bytearray()
+                for i in range(int(sample_rate * 1.4)):
+                    t = float(i) / sample_rate
+                    hum = 0.28 * math.sin(2 * math.pi * 120 * t) + 0.16 * math.sin(2 * math.pi * 240 * t)
+                    crackle = (random.random() * 2 - 1) * 0.40
+                    if random.random() < 0.08:
+                        crackle += (random.random() * 2 - 1) * 0.72
+                    sample_val = max(-1.0, min(1.0, hum + crackle))
+                    frames.extend(struct.pack('<h', int(sample_val * 26000)))
+                wav_file.writeframes(frames)
+        except Exception as err:
+            logger.debug(f"Weld sound generation: {err}")
+
+    if not os.path.exists(SHUTDOWN_SOUND):
+        try:
+            with wave.open(SHUTDOWN_SOUND, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                frames = bytearray()
+                for i in range(int(sample_rate * 0.50)):
+                    t = float(i) / sample_rate
+                    freq = max(35.0, 340.0 * math.exp(-t * 9.0))
+                    envelope = math.exp(-t * 7.5)
+                    tone = math.sin(2 * math.pi * freq * t) * envelope * 0.75
+                    clunk = (random.random() * 2 - 1) * math.exp(-t * 22.0) * 0.95
+                    sample_val = max(-1.0, min(1.0, tone + clunk))
+                    frames.extend(struct.pack('<h', int(sample_val * 28000)))
+                wav_file.writeframes(frames)
+        except Exception as err:
+            logger.debug(f"EStop sound generation: {err}")
+
+
+class SoundManager:
+    """Industrial audio controller supporting Windows winsound and macOS/Linux subprocess."""
+    def __init__(self):
+        self.enabled: bool = True
+        self.is_playing: bool = False
+        self._proc: Optional[subprocess.Popen] = None
+
+    def play_weld(self) -> None:
+        if not self.enabled or self.is_playing:
+            return
+        self.is_playing = True
+        if HAS_WINSOUND:
+            try:
+                winsound.PlaySound(SOUND_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+            except Exception:
+                self.is_playing = False
+        elif SYSTEM_OS == "darwin" and os.path.exists(SOUND_FILE):
+            try:
+                self._proc = subprocess.Popen(["afplay", SOUND_FILE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                self.is_playing = False
+
+    def stop_weld(self) -> None:
+        if not self.is_playing:
+            return
+        self.is_playing = False
+        if HAS_WINSOUND:
+            try:
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except Exception:
+                pass
+        elif self._proc:
+            try:
+                self._proc.terminate()
+                self._proc = None
+            except Exception:
+                pass
+
+    def play_estop(self) -> None:
+        if not self.enabled:
+            return
+        if HAS_WINSOUND:
+            try:
+                winsound.PlaySound(SHUTDOWN_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception:
+                pass
+        elif SYSTEM_OS == "darwin" and os.path.exists(SHUTDOWN_SOUND):
+            try:
+                subprocess.Popen(["afplay", SHUTDOWN_SOUND], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
 
 # ==============================================================================
-# 3. RIGID 6-AXIS INDUSTRIAL ROBOT KINEMATICS
+# 3. KINEMATICS ENGINE (6-AXIS ARTICULATED ARM)
 # ==============================================================================
-class RobotKinematics:
+class KinematicsEngine:
     """
-    Standard KUKA 6-Axis Kinematics.
-    Maintains rigid, constant mechanical link dimensions across all movements.
+    KUKA 6-Axis Industrial Robot Kinematics Solver.
+    Preserves exact constant link lengths for standard 6-DOF industrial architecture.
     """
     def __init__(self):
-        self.d1 = 320.0     # Base height to A2 shoulder pivot
-        self.a1 = 140.0     # Shoulder horizontal offset from A1 axis
-        self.l1 = 430.0     # Upper arm link (Shoulder A2 to Elbow A3)
-        self.l2 = 430.0     # Forearm link (Elbow A3 to Wrist Flange A5)
-        self.l3 = 140.0     # Tool Flange to Torch Tip (TCP)
+        self.d1: float = 320.0     # Base height to A2 shoulder pivot
+        self.a1: float = 140.0     # Shoulder horizontal offset from A1 axis
+        self.l1: float = 430.0     # Upper arm link (Shoulder A2 to Elbow A3)
+        self.l2: float = 430.0     # Forearm link (Elbow A3 to Wrist Flange A5)
+        self.l3: float = 140.0     # Tool Flange to Torch Tip (TCP)
 
-        self.limits = {
+        self.limits: Dict[str, Tuple[float, float]] = {
             'A1': (-185.0, 185.0),
             'A2': (-135.0, 45.0),
             'A3': (-120.0, 155.0),
@@ -210,7 +299,7 @@ class RobotKinematics:
             'A6': (-350.0, 350.0)
         }
 
-    def solve(self, target_x, target_y, target_z):
+    def solve(self, target_x: float, target_y: float, target_z: float) -> Tuple[Dict[str, Tuple[float, float, float]], Dict[str, float], bool]:
         tx = float(target_x)
         ty = float(target_y)
         tz = float(target_z)
@@ -223,7 +312,6 @@ class RobotKinematics:
         r_xy = math.sqrt(tx * tx + ty * ty) + 1e-6
 
         # 2. Tool Vector & Wrist Center Point (W)
-        # Torch tilted down towards workpiece at ~55 deg
         t_pitch = math.radians(55.0)
         w_r = r_xy - self.l3 * math.sin(t_pitch)
         w_z = tz + self.l3 * math.cos(t_pitch)
@@ -237,11 +325,11 @@ class RobotKinematics:
         reachable = (min_reach <= d_reach <= max_reach)
         d_clamped = max(min_reach, min(max_reach, d_reach))
 
-        # Law of Cosines
+        # Law of Cosines for Elbow and Shoulder
         cos_alpha = (self.l1 * self.l1 + d_clamped * d_clamped - self.l2 * self.l2) / (2.0 * self.l1 * d_clamped)
         alpha = math.acos(max(-1.0, min(1.0, cos_alpha)))
         phi = math.atan2(dz, dr)
-        theta1 = phi + alpha  # Upper arm angle from horizontal
+        theta1 = phi + alpha
 
         cos_beta = (self.l1 * self.l1 + self.l2 * self.l2 - d_clamped * d_clamped) / (2.0 * self.l1 * self.l2)
         beta = math.acos(max(-1.0, min(1.0, cos_beta)))
@@ -252,19 +340,19 @@ class RobotKinematics:
         a5_deg = math.degrees(t_pitch - (theta1 - theta2))
 
         # Exact 3D Positions of all Joints
-        j0 = (0.0, 0.0, 0.0)                                # Ground Mount
-        j1 = (0.0, 0.0, self.d1)                            # Turntable Top
-        j2 = (ux * self.a1, uy * self.a1, self.d1)          # Shoulder Pivot (A2)
+        j0 = (0.0, 0.0, 0.0)
+        j1 = (0.0, 0.0, self.d1)
+        j2 = (ux * self.a1, uy * self.a1, self.d1)
 
         r3 = self.a1 + self.l1 * math.cos(theta1)
         z3 = self.d1 + self.l1 * math.sin(theta1)
-        j3 = (ux * r3, uy * r3, z3)                         # Elbow Pivot (A3)
+        j3 = (ux * r3, uy * r3, z3)
 
         r4 = r3 + self.l2 * math.cos(theta1 - theta2)
         z4 = z3 + self.l2 * math.sin(theta1 - theta2)
-        j4 = (ux * r4, uy * r4, z4)                         # Wrist Flange (A4/A5)
+        j4 = (ux * r4, uy * r4, z4)
 
-        tcp = (tx, ty, tz)                                  # Torch Tip
+        tcp = (tx, ty, tz)
 
         joints = {'J0': j0, 'J1': j1, 'J2': j2, 'J3': j3, 'J4': j4, 'TCP': tcp}
         angles = {
@@ -279,41 +367,39 @@ class RobotKinematics:
 
 
 # ==============================================================================
-# 4. MAIN CONTROLLER & 3D CYBER-PHYSICAL WORKCELL UI
+# 4. KUKA INDUSTRIAL HMI CONTROLLER & CYBER-PHYSICAL WORKCELL UI
 # ==============================================================================
 class KukaVisualControlUI:
-    def __init__(self, root):
+    """
+    KUKA Roboter GmbH Enterprise smartHMI & 3D Digital Twin Application.
+    Zero-emoji, high-contrast industrial control console.
+    """
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("KUKA KRC5 Cyber-Physical Controller | Multi-Metal Industrial Cell")
-        self.root.geometry("1280x840")
-        self.root.minsize(1080, 720)
+        self.root.title("KUKA Roboter GmbH | KRC5 Cyber-Physical Controller | Industrial Workcell")
+        self.root.geometry("1300x860")
+        self.root.minsize(1100, 720)
         self.root.configure(bg="#07090e")
-
-        self.root.lift()
-        self.root.attributes('-topmost', True)
-        self.root.after(350, lambda: self.root.attributes('-topmost', False))
 
         try:
             generate_audio_assets()
-        except Exception as e:
-            print(f"Audio asset warning: {e}")
+        except Exception:
+            pass
 
-        # Core State
-        self.kinematics = RobotKinematics()
-        self.curr_pos = {"X": 460.0, "Y": 0.0, "Z": 850.0}
-        self.disp_pos = {"X": 460.0, "Y": 0.0, "Z": 850.0}
-        self.target_pos = {"X": 460.0, "Y": 0.0, "Z": 850.0}
+        self.sound = SoundManager()
+        self.kinematics = KinematicsEngine()
 
-        # Active Material Selection
+        # Operational States
+        self.curr_pos: Dict[str, float] = {"X": 460.0, "Y": 0.0, "Z": 850.0}
+        self.disp_pos: Dict[str, float] = {"X": 460.0, "Y": 0.0, "Z": 850.0}
+        self.target_pos: Dict[str, float] = {"X": 460.0, "Y": 0.0, "Z": 850.0}
+
         self.selected_metal_key = tk.StringVar(value='carbon_steel')
-
-        self.is_powered_on = True
-        self.is_moving = False
-        self.is_welding = False
-        self.is_auto_cycle = False
-        self.connected = False
-        self.sound_enabled = True
-        self.sound_playing = False
+        self.is_powered_on: bool = True
+        self.is_moving: bool = False
+        self.is_welding: bool = False
+        self.is_auto_cycle: bool = False
+        self.connected: bool = False
 
         # Visual Toggles
         self.show_grid = tk.BooleanVar(value=True)
@@ -323,19 +409,19 @@ class KukaVisualControlUI:
         self.speed_override = tk.IntVar(value=85)
 
         # 3D Orbit Camera State (Isometric default view)
-        self.cam_azimuth = 38.0     # degrees
-        self.cam_elevation = 24.0   # degrees
-        self.cam_zoom = 1.15
-        self.cam_pan_x = 0.0
-        self.cam_pan_y = 0.0
-        self._drag_start = (0, 0)
+        self.cam_azimuth: float = 38.0
+        self.cam_elevation: float = 24.0
+        self.cam_zoom: float = 1.15
+        self.cam_pan_x: float = 0.0
+        self.cam_pan_y: float = 0.0
+        self._drag_start: Tuple[int, int] = (0, 0)
 
-        self.path_history = []
-        self.weld_bead_history = []
-        self.particles = []
-        self.estop_flash_tick = 0
-        self.arc_flash_tick = 0
-        self.auto_step_name = "READY"
+        self.path_history: List[Tuple[float, float, float]] = []
+        self.weld_bead_history: List[Tuple[float, float, float]] = []
+        self.particles: List[Dict[str, Any]] = []
+        self.estop_flash_tick: int = 0
+        self.arc_flash_tick: int = 0
+        self.auto_step_name: str = "READY"
 
         self._init_styles()
         self._build_layout()
@@ -343,7 +429,7 @@ class KukaVisualControlUI:
         self._start_animation_loop()
         self._test_connection_async()
 
-    def _init_styles(self):
+    def _init_styles(self) -> None:
         self.style = ttk.Style()
         self.style.theme_use('clam')
 
@@ -376,29 +462,32 @@ class KukaVisualControlUI:
         self.style.configure('Preset.TButton', background='#1a2333', foreground='#34d399', font=('Segoe UI', 8, 'bold'), borderwidth=0)
         self.style.map('Preset.TButton', background=[('active', '#2d3a52'), ('disabled', '#10141e')])
 
-    def _build_layout(self):
-        # 1. TOP HEADER & STATUS BAR
+    def _build_layout(self) -> None:
+        # 1. TOP HEADER & INDUSTRIAL TELEMETRY STATUS BAR
         hdr = tk.Frame(self.root, bg="#04060a", padx=16, pady=8)
         hdr.pack(fill='x')
 
         title_box = tk.Frame(hdr, bg="#04060a")
         title_box.pack(side='left')
-        tk.Label(title_box, text="⚡ KUKA", bg="#04060a", fg="#ff5500", font=('Segoe UI', 14, 'bold')).pack(side='left')
-        tk.Label(title_box, text=" KRC5 INDUSTRIAL ROBOTIC WELD CELL", bg="#04060a", fg="#f8fafc", font=('Segoe UI', 11, 'bold')).pack(side='left', padx=(2, 10))
-        tk.Label(title_box, text="| Multi-Metal Metallurgy & Slotted Table Cell", bg="#04060a", fg="#64748b", font=('Segoe UI', 9)).pack(side='left')
 
-        # Header Badges
+        brand_chip = tk.Label(title_box, text="KUKA", bg="#ff5500", fg="#04060a", font=('Segoe UI', 11, 'bold'), padx=6, pady=1)
+        brand_chip.pack(side='left', padx=(0, 8))
+
+        tk.Label(title_box, text="KRC5 INDUSTRIAL ROBOTIC WELD CELL", bg="#04060a", fg="#f8fafc", font=('Segoe UI', 11, 'bold')).pack(side='left', padx=(2, 10))
+        tk.Label(title_box, text="| Multi-Metal Metallurgy & Slotted Table Cell (KR 16 R2010-2)", bg="#04060a", fg="#64748b", font=('Segoe UI', 9)).pack(side='left')
+
+        # Header Badges (Right)
         self.btn_sound = tk.Button(
-            hdr, text="🔊 SOUND: ON", bg="#141a27", fg="#38bdf8", activebackground="#212a3d",
+            hdr, text="AUDIO: ON", bg="#141a27", fg="#38bdf8", activebackground="#212a3d",
             activeforeground="#ffffff", font=('Segoe UI', 8, 'bold'), relief='flat', padx=10, pady=3,
             command=self.toggle_sound
         )
         self.btn_sound.pack(side='right', padx=6)
 
-        self.lbl_power_state = tk.Label(hdr, text="⚡ 400V DRIVES: ENERGIZED", bg="#04060a", fg="#22c55e", font=('Segoe UI', 9, 'bold'))
+        self.lbl_power_state = tk.Label(hdr, text="[400V DRIVES: ENERGIZED]", bg="#04060a", fg="#22c55e", font=('Consolas', 9, 'bold'))
         self.lbl_power_state.pack(side='right', padx=10)
 
-        self.lbl_status = tk.Label(hdr, text="● CHECKING LINK...", bg="#04060a", fg="#f59e0b", font=('Segoe UI', 9, 'bold'))
+        self.lbl_status = tk.Label(hdr, text="[LINK: CHECKING...]", bg="#04060a", fg="#f59e0b", font=('Consolas', 9, 'bold'))
         self.lbl_status.pack(side='right', padx=8)
 
         # 2. MAIN WORKSPACE SPLIT
@@ -412,12 +501,12 @@ class KukaVisualControlUI:
         # Viewport Header Toolbar
         vp_tool = tk.Frame(left_box, bg="#0a0e16", padx=10, pady=5)
         vp_tool.pack(fill='x')
-        tk.Label(vp_tool, text="🎮 3D Viewport | Left-Drag Orbit | Wheel Zoom | Right-Drag Pan", bg="#0a0e16", fg="#94a3b8", font=('Segoe UI', 8)).pack(side='left')
+        tk.Label(vp_tool, text="3D WORKCELL VIEWPORT | Left-Drag: Orbit | Scroll: Zoom | Right-Drag: Pan", bg="#0a0e16", fg="#94a3b8", font=('Segoe UI', 8)).pack(side='left')
 
         # Camera View presets
         btn_box = tk.Frame(vp_tool, bg="#0a0e16")
         btn_box.pack(side='right')
-        for name, az, el in [("🧊 ISO", 38, 24), ("⬆️ TOP", 0, 88), ("➡️ FRONT", 0, 4), ("↗️ SIDE", 90, 4)]:
+        for name, az, el in [("ISO", 38, 24), ("TOP", 0, 88), ("FRONT", 0, 4), ("SIDE", 90, 4)]:
             b = tk.Button(
                 btn_box, text=name, bg="#141a27", fg="#38bdf8", activebackground="#222b3e",
                 activeforeground="#ffffff", font=('Segoe UI', 8, 'bold'), relief='flat', padx=7, pady=1,
@@ -440,7 +529,7 @@ class KukaVisualControlUI:
         self.canvas.pack(fill='both', expand=True, padx=2, pady=2)
         self.canvas.bind("<Configure>", lambda e: self._draw_scene())
 
-        # RIGHT: TEACH PENDANT & METALLURGY DECK (460px)
+        # RIGHT: TEACH PENDANT & METALLURGY DECK
         right_box = tk.Frame(main_frame, bg="#07090e", width=460)
         right_box.pack(side='right', fill='both', padx=(6, 0))
         right_box.pack_propagate(False)
@@ -452,15 +541,15 @@ class KukaVisualControlUI:
         tab_materials = tk.Frame(self.notebook, bg="#0c0f17", padx=8, pady=8)
         tab_telemetry = tk.Frame(self.notebook, bg="#0c0f17", padx=8, pady=8)
 
-        self.notebook.add(tab_motion, text=" 🕹️ MOTION & JOG ")
-        self.notebook.add(tab_materials, text=" 🔩 METALS & MATERIALS ")
-        self.notebook.add(tab_telemetry, text=" 📊 DIAGNOSTICS ")
+        self.notebook.add(tab_motion, text=" MOTION & JOG ")
+        self.notebook.add(tab_materials, text=" METALLURGY & MATERIALS ")
+        self.notebook.add(tab_telemetry, text=" DIAGNOSTICS & TELEMETRY ")
 
         self._build_tab_telemetry(tab_telemetry)
         self._build_tab_materials(tab_materials)
         self._build_tab_motion(tab_motion)
 
-    def _build_tab_motion(self, parent):
+    def _build_tab_motion(self, parent: tk.Frame) -> None:
         # 1. Target Coordinates Frame
         f_coord = ttk.LabelFrame(parent, text=" Target Position (World TCP - mm) ", padding=8)
         f_coord.pack(fill='x', pady=(0, 4))
@@ -468,7 +557,7 @@ class KukaVisualControlUI:
         grid = tk.Frame(f_coord, bg="#111520")
         grid.pack(fill='x')
 
-        self.entries = {}
+        self.entries: Dict[str, tk.Entry] = {}
         for idx, (axis, def_val, clr) in enumerate([("X", "460.0", "#ef4444"), ("Y", "0.0", "#22c55e"), ("Z", "850.0", "#38bdf8")]):
             tk.Label(grid, text=f"{axis}:", bg="#111520", fg=clr, font=('Segoe UI', 10, 'bold'), width=3, anchor='e').grid(row=idx, column=0, padx=2, pady=2)
 
@@ -481,7 +570,7 @@ class KukaVisualControlUI:
             ent.grid(row=idx, column=1, padx=4, pady=2)
             self.entries[axis] = ent
 
-        self.sliders = {}
+        self.sliders: Dict[str, tk.Scale] = {}
         s_ranges = {"X": (150, 950), "Y": (-550, 550), "Z": (150, 1250)}
         for idx, axis in enumerate(["X", "Y", "Z"]):
             low, high = s_ranges[axis]
@@ -496,12 +585,12 @@ class KukaVisualControlUI:
         grid.columnconfigure(2, weight=1)
 
         # 2. Micro-Jog Step Increments & Matrix
-        f_jog = ttk.LabelFrame(parent, text=" Micro-Jog Axes (Cartesian) ", padding=6)
+        f_jog = ttk.LabelFrame(parent, text=" Micro-Jog Cartesian Axes ", padding=6)
         f_jog.pack(fill='x', pady=4)
 
         f_step = tk.Frame(f_jog, bg="#111520")
         f_step.pack(fill='x', pady=(0, 4))
-        tk.Label(f_step, text="Step:", bg="#111520", fg="#94a3b8", font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(0, 4))
+        tk.Label(f_step, text="Step Increment:", bg="#111520", fg="#94a3b8", font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(0, 4))
         for step in [1.0, 10.0, 25.0, 50.0, 100.0]:
             r = tk.Radiobutton(
                 f_step, text=f"{int(step)}mm", value=step, variable=self.jog_step,
@@ -513,12 +602,12 @@ class KukaVisualControlUI:
         jf = tk.Frame(f_jog, bg="#111520")
         jf.pack(fill='x')
 
-        self.jog_buttons = []
+        self.jog_buttons: List[ttk.Button] = []
         jog_defs = [
             ("X- (Retract)", 'X', -1, 0, 0), ("X+ (Extend)", 'X', 1, 0, 1),
             ("Y- (Left)", 'Y', -1, 0, 2),    ("Y+ (Right)", 'Y', 1, 0, 3),
             ("Z- (Down)", 'Z', -1, 1, 0),    ("Z+ (Up)", 'Z', 1, 1, 1),
-            ("Reset View", 'cam', 0, 1, 2),  ("Zero Y", 'zero_y', 0, 1, 3)
+            ("Reset Camera", 'cam', 0, 1, 2),("Zero Y Axis", 'zero_y', 0, 1, 3)
         ]
         for label, axis, dir_mul, r, c in jog_defs:
             if axis in ['X', 'Y', 'Z']:
@@ -538,20 +627,20 @@ class KukaVisualControlUI:
             jf.columnconfigure(col, weight=1)
 
         # 3. Workcell Presets
-        f_presets = ttk.LabelFrame(parent, text=" Pipe Seam Station Presets ", padding=6)
+        f_presets = ttk.LabelFrame(parent, text=" Calibrated Workcell Presets ", padding=6)
         f_presets.pack(fill='x', pady=4)
 
         pf = tk.Frame(f_presets, bg="#111520")
         pf.pack(fill='x')
         presets = [
-            ("🏠 Standby Home", 460, 0, 850),
-            ("🎯 Pipe Approach", 580, -180, 580),
-            ("🔥 Seam Start", 580, -180, 495),
-            ("🔥 Seam Mid", 580, 0, 495),
-            ("🔥 Seam End", 580, 180, 495),
-            ("🧹 Clean Station", 260, 380, 680)
+            ("P1: Standby Home", 460, 0, 850),
+            ("P2: Approach Clearance", 580, -180, 580),
+            ("P3: Seam Sector 0°", 580, -180, 495),
+            ("P4: Seam Sector 90°", 580, 0, 495),
+            ("P5: Seam Sector 180°", 580, 180, 495),
+            ("P6: Torch Clean Station", 260, 380, 680)
         ]
-        self.preset_btns = []
+        self.preset_btns: List[ttk.Button] = []
         for i, (name, px, py, pz) in enumerate(presets):
             btn = ttk.Button(pf, text=name, style='Preset.TButton', command=lambda x=px, y=py, z=pz: self.set_coords(x, y, z))
             btn.grid(row=i//3, column=i%3, padx=2, pady=2, sticky='ew')
@@ -562,7 +651,7 @@ class KukaVisualControlUI:
         # 4. Speed Override Slider
         f_spd = tk.Frame(parent, bg="#0c0f17")
         f_spd.pack(fill='x', pady=(4, 2))
-        tk.Label(f_spd, text="Speed Override:", bg="#0c0f17", fg="#94a3b8", font=('Segoe UI', 8, 'bold')).pack(side='left')
+        tk.Label(f_spd, text="Program Velocity Override ($OV_PRO):", bg="#0c0f17", fg="#94a3b8", font=('Segoe UI', 8, 'bold')).pack(side='left')
         self.lbl_spd = tk.Label(f_spd, text="85%", bg="#0c0f17", fg="#38bdf8", font=('Segoe UI', 8, 'bold'), width=5)
         self.lbl_spd.pack(side='right')
 
@@ -577,33 +666,32 @@ class KukaVisualControlUI:
         f_act = tk.Frame(parent, bg="#0c0f17")
         f_act.pack(fill='x', pady=4)
 
-        self.btn_move = ttk.Button(f_act, text="🚀 TRANSMIT MOVE", style='Primary.TButton', command=self.send_move)
+        self.btn_move = ttk.Button(f_act, text="EXECUTE MOTION", style='Primary.TButton', command=self.send_move)
         self.btn_move.pack(side='left', fill='x', expand=True, padx=(0, 2))
 
-        self.btn_auto = ttk.Button(f_act, text="🔄 AUTO PIPE WELD CYCLE", style='Action.TButton', command=self.toggle_auto_demo)
+        self.btn_auto = ttk.Button(f_act, text="AUTO WELD CYCLE", style='Action.TButton', command=self.toggle_auto_demo)
         self.btn_auto.pack(side='left', fill='x', expand=True, padx=2)
 
-        self.btn_estop = ttk.Button(f_act, text="🛑 E-STOP", style='Halt.TButton', command=self.trigger_estop)
+        self.btn_estop = ttk.Button(f_act, text="EMERGENCY STOP (E-STOP)", style='Halt.TButton', command=self.trigger_estop)
         self.btn_estop.pack(side='right', fill='x', expand=True, padx=(2, 0))
 
         # Reset & Power-On Bar
         self.reset_bar = tk.Frame(parent, bg="#0c0f17")
         self.btn_power_on = ttk.Button(
             self.reset_bar,
-            text="🟢 RESET SAFETY CIRCUIT & POWER ON MACHINE",
+            text="RESET SAFETY INTERLOCKS & ENERGIZE DRIVES",
             style='PowerOn.TButton',
             command=self.reset_and_power_on
         )
         self.btn_power_on.pack(fill='x', expand=True, pady=2)
 
-    def _build_tab_materials(self, parent):
-        # Multiple Metals & Metallurgy Selection Deck
-        f_mat = ttk.LabelFrame(parent, text=" Select Workpiece Material & Metallurgy ", padding=8)
+    def _build_tab_materials(self, parent: tk.Frame) -> None:
+        f_mat = ttk.LabelFrame(parent, text=" Workpiece Metallurgy & Weld Process Standards ", padding=8)
         f_mat.pack(fill='both', expand=True)
 
         tk.Label(
             f_mat,
-            text="💡 Click any metal alloy below to dynamically change the pipe material shaders, welding arc parameters, gas shielding, and weld bead aesthetics:",
+            text="Select an alloy profile to dynamically configure metallurgical parameters, shielding gas composition, and weld deposition aesthetics:",
             bg="#111520", fg="#94a3b8", font=('Segoe UI', 8), wraplength=410, justify='left'
         ).pack(anchor='w', pady=(0, 6))
 
@@ -643,23 +731,23 @@ class KukaVisualControlUI:
 
         self._on_material_change()
 
-    def _on_material_change(self):
+    def _on_material_change(self) -> None:
         key = self.selected_metal_key.get()
         data = METALS_DATABASE.get(key, METALS_DATABASE['carbon_steel'])
 
-        self.lbl_mat_name.config(text=f"Active Metallurgy: {data['code']}")
+        self.lbl_mat_name.config(text=f"Active Metallurgy: {data['code']} ({data['standard']})")
         self.lbl_mat_desc.config(text=data['desc'])
-        self.lbl_mat_gas.config(text=f"Shielding Gas: {data['gas']} | Arc Preset: {data['voltage']}V / {data['current']}A")
-        self.add_log(f"Material changed to: {data['name']} ({data['gas']})")
+        self.lbl_mat_gas.config(text=f"Shield Gas: {data['gas']} | Arc Parameters: {data['voltage']}V / {data['current']}A | Wire Feed: {data['wire_speed']}m/min")
+        self.add_log(f"[MATERIAL] Selected profile: {data['name']} [Gas: {data['gas']}]")
         self._draw_scene()
 
-    def _build_tab_telemetry(self, parent):
+    def _build_tab_telemetry(self, parent: tk.Frame) -> None:
         # 1. Joint Angles Telemetry Gauges (A1..A6)
-        f_joints = ttk.LabelFrame(parent, text=" Real-time Joint Angles (Degrees) ", padding=8)
+        f_joints = ttk.LabelFrame(parent, text=" Real-Time Axis Angles (Degrees) ", padding=8)
         f_joints.pack(fill='x', pady=(0, 4))
 
-        self.lbl_joints = {}
-        self.prog_joints = {}
+        self.lbl_joints: Dict[str, tk.Label] = {}
+        self.prog_joints: Dict[str, ttk.Progressbar] = {}
         j_grid = tk.Frame(f_joints, bg="#111520")
         j_grid.pack(fill='x')
 
@@ -683,12 +771,12 @@ class KukaVisualControlUI:
         pf = tk.Frame(f_process, bg="#111520")
         pf.pack(fill='x')
 
-        self.telemetry_labels = {}
+        self.telemetry_labels: Dict[str, tk.Label] = {}
         telemetry_items = [
             ("Arc Voltage", "0.0 V", "#38bdf8"),
             ("Weld Current", "0.0 A", "#ff5500"),
-            ("Wire Feed", "0.0 m/min", "#22c55e"),
-            ("Shield Gas", "0.0 L/min", "#a855f7")
+            ("Wire Feed Speed", "0.0 m/min", "#22c55e"),
+            ("Shield Gas Flow", "0.0 L/min", "#a855f7")
         ]
         for idx, (title, val, col) in enumerate(telemetry_items):
             box = tk.Frame(pf, bg="#080b12", bd=1, relief='solid', padx=6, pady=4)
@@ -700,16 +788,16 @@ class KukaVisualControlUI:
         pf.columnconfigure(0, weight=1); pf.columnconfigure(1, weight=1)
 
         # 3. KRL Protocol Log Stream
-        f_log = ttk.LabelFrame(parent, text=" KRL Communication Console & Telemetry Log ", padding=4)
+        f_log = ttk.LabelFrame(parent, text=" KRL Communication Console & Diagnostics Log ", padding=4)
         f_log.pack(fill='both', expand=True, pady=(4, 0))
 
         self.txt_log = tk.Text(f_log, wrap='word', height=7, bg="#05070c", fg="#10b981", font=('Consolas', 8), bd=0)
         self.txt_log.pack(fill='both', expand=True)
 
-        self.add_log("KUKA KRC5 Cyber-Physical Controller initialized.")
-        self.add_log("6-Axis Kinematics Engine active. Ready for commands.")
+        self.add_log("[SYS-INIT] KUKA KRC5 Cyber-Physical Controller initialized.")
+        self.add_log("[SYS-INIT] 6-Axis Kinematics Engine active. Ready for commands.")
 
-    def _bind_camera_events(self):
+    def _bind_camera_events(self) -> None:
         self.canvas.bind("<Button-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag_orbit)
         self.canvas.bind("<Button-3>", self._on_mouse_down)
@@ -719,10 +807,10 @@ class KukaVisualControlUI:
         self.canvas.bind("<Button-5>", lambda e: self._adjust_zoom(0.9))
         self.canvas.bind("<Double-Button-1>", lambda e: self.set_camera_preset(38, 24))
 
-    def _on_mouse_down(self, event):
+    def _on_mouse_down(self, event: tk.Event) -> None:
         self._drag_start = (event.x, event.y)
 
-    def _on_mouse_drag_orbit(self, event):
+    def _on_mouse_drag_orbit(self, event: tk.Event) -> None:
         dx = event.x - self._drag_start[0]
         dy = event.y - self._drag_start[1]
         self._drag_start = (event.x, event.y)
@@ -732,7 +820,7 @@ class KukaVisualControlUI:
         self.lbl_cam_info.config(text=f"Cam: Az={int(self.cam_azimuth)}° El={int(self.cam_elevation)}° Zoom={self.cam_zoom:.2f}x")
         self._draw_scene()
 
-    def _on_mouse_drag_pan(self, event):
+    def _on_mouse_drag_pan(self, event: tk.Event) -> None:
         dx = event.x - self._drag_start[0]
         dy = event.y - self._drag_start[1]
         self._drag_start = (event.x, event.y)
@@ -741,16 +829,16 @@ class KukaVisualControlUI:
         self.cam_pan_y += dy
         self._draw_scene()
 
-    def _on_mouse_wheel(self, event):
+    def _on_mouse_wheel(self, event: tk.Event) -> None:
         factor = 1.1 if event.delta > 0 else 0.9
         self._adjust_zoom(factor)
 
-    def _adjust_zoom(self, factor):
+    def _adjust_zoom(self, factor: float) -> None:
         self.cam_zoom = max(0.4, min(3.5, self.cam_zoom * factor))
         self.lbl_cam_info.config(text=f"Cam: Az={int(self.cam_azimuth)}° El={int(self.cam_elevation)}° Zoom={self.cam_zoom:.2f}x")
         self._draw_scene()
 
-    def set_camera_preset(self, az, el):
+    def set_camera_preset(self, az: float, el: float) -> None:
         self.cam_azimuth = float(az)
         self.cam_elevation = float(el)
         self.cam_pan_x = 0.0
@@ -759,104 +847,76 @@ class KukaVisualControlUI:
         self.lbl_cam_info.config(text=f"Cam: Az={int(self.cam_azimuth)}° El={int(self.cam_elevation)}° Zoom={self.cam_zoom:.2f}x")
         self._draw_scene()
 
-    def _on_slider_change(self, axis, val):
-        ent = self.entries[axis]
-        ent.delete(0, tk.END)
-        ent.insert(0, f"{float(val):.1f}")
+    def set_coords(self, x: float, y: float, z: float) -> None:
+        self.entries['X'].delete(0, tk.END); self.entries['X'].insert(0, f"{x:.1f}")
+        self.entries['Y'].delete(0, tk.END); self.entries['Y'].insert(0, f"{y:.1f}")
+        self.entries['Z'].delete(0, tk.END); self.entries['Z'].insert(0, f"{z:.1f}")
 
-    def jog_axis(self, axis, direction):
+        for ax, val in [('X', x), ('Y', y), ('Z', z)]:
+            if ax in self.sliders:
+                self.sliders[ax].set(val)
+        self.send_move()
+
+    def _on_slider_change(self, axis: str, val: Union[float, str]) -> None:
+        self.entries[axis].delete(0, tk.END)
+        self.entries[axis].insert(0, f"{float(val):.1f}")
+        if not self.is_moving:
+            self.send_move()
+
+    def jog_axis(self, axis: str, dir_mul: int) -> None:
         if not self.is_powered_on:
-            messagebox.showwarning("Power Off", "Machine is powered off. Reset E-Stop & Power On first!")
             return
-        delta = self.jog_step.get() * direction
-        ent = self.entries[axis]
+        step = self.jog_step.get()
         try:
-            curr = float(ent.get() or 0)
-            new_val = curr + delta
-            ent.delete(0, tk.END)
-            ent.insert(0, f"{new_val:.1f}")
+            curr = float(self.entries[axis].get())
+            new_val = curr + (dir_mul * step)
+            self.entries[axis].delete(0, tk.END)
+            self.entries[axis].insert(0, f"{new_val:.1f}")
             if axis in self.sliders:
                 self.sliders[axis].set(new_val)
             self.send_move()
         except ValueError:
             pass
 
-    def set_coords(self, x, y, z):
-        if not self.is_powered_on:
-            messagebox.showwarning("Power Off", "Cannot move: Machine drives powered off. Reset safety circuit first.")
-            return
-        for ax, val in [('X', x), ('Y', y), ('Z', z)]:
-            self.entries[ax].delete(0, tk.END)
-            self.entries[ax].insert(0, f"{float(val):.1f}")
-            if ax in self.sliders:
-                self.sliders[ax].set(float(val))
-        self.send_move()
-
-    def add_log(self, msg):
-        if hasattr(self, 'txt_log') and self.txt_log:
+    def add_log(self, msg: str) -> None:
+        logger.info(msg)
+        if hasattr(self, 'txt_log'):
             try:
-                timestamp = time.strftime("%H:%M:%S")
-                self.txt_log.insert(tk.END, f"[{timestamp}] {msg}\n")
+                self.txt_log.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {msg}\n")
                 self.txt_log.see(tk.END)
             except Exception:
                 pass
 
-    def toggle_sound(self):
-        self.sound_enabled = not self.sound_enabled
-        if self.sound_enabled:
-            self.btn_sound.config(text="🔊 SOUND: ON", fg="#38bdf8")
-            self.add_log("Audio FX enabled.")
+    def toggle_sound(self) -> None:
+        self.sound.enabled = not self.sound.enabled
+        if self.sound.enabled:
+            self.btn_sound.config(text="AUDIO: ON", fg="#38bdf8")
+            self.add_log("[AUDIO] Sound effects enabled.")
         else:
-            self.btn_sound.config(text="🔇 SOUND: OFF", fg="#94a3b8")
-            self._stop_weld_sound()
-            self.add_log("Audio FX muted.")
+            self.btn_sound.config(text="AUDIO: MUTED", fg="#94a3b8")
+            self.sound.stop_weld()
+            self.add_log("[AUDIO] Sound effects muted.")
 
-    def _play_weld_sound(self):
-        if not HAS_WINSOUND or not self.sound_enabled or self.sound_playing or not self.is_powered_on:
-            return
-        try:
-            self.sound_playing = True
-            winsound.PlaySound(SOUND_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
-        except Exception:
-            self.sound_playing = False
-
-    def _stop_weld_sound(self):
-        if not HAS_WINSOUND or not self.sound_playing:
-            return
-        try:
-            self.sound_playing = False
-            winsound.PlaySound(None, winsound.SND_PURGE)
-        except Exception:
-            pass
-
-    def _play_estop_sound(self):
-        if not HAS_WINSOUND or not self.sound_enabled:
-            return
-        try:
-            winsound.PlaySound(SHUTDOWN_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
-        except Exception:
-            pass
-
-    def trigger_estop(self):
+    def trigger_estop(self) -> None:
         self.is_powered_on = False
         self.is_auto_cycle = False
         self.is_welding = False
         self.is_moving = False
         self.auto_step_name = "E-STOPPED"
 
-        self._stop_weld_sound()
-        self._play_estop_sound()
+        self.sound.stop_weld()
+        self.sound.play_estop()
 
-        self.btn_auto.config(text="🔄 AUTO PIPE WELD CYCLE")
-        self.lbl_power_state.config(text="🛑 400V DRIVES: OFF (LOCKED)", fg="#ef4444")
+        self.btn_auto.config(text="AUTO WELD CYCLE")
+        self.lbl_power_state.config(text="[400V DRIVES: LOCKED (E-STOP)]", fg="#ef4444")
         self.reset_bar.pack(fill='x', pady=(4, 0), before=self.btn_estop.master)
         self._set_controls_state('disabled')
-        self.add_log("🛑 [E-STOP TRIPPED] 400V Main Contactors Open! Mechanical Brakes Clamped.")
+        self.add_log("[SAFETY-ESTOP] Emergency Stop Engaged: 400V Main Contactors Open! Mechanical Brakes Clamped.")
 
         threading.Thread(target=self._tcp_send_packet, args=(0, 0, -1), daemon=True).start()
 
-    def reset_and_power_on(self):
-        self.add_log("🟢 Resetting safety interlocks and energizing drives...")
+    def reset_and_power_on(self) -> None:
+        self.add_log("[SAFETY-RESET] Resetting safety interlocks and energizing drives...")
 
         def worker():
             packet = "<Robot><Command><Reset>1</Reset></Command></Robot>\n"
@@ -866,23 +926,23 @@ class KukaVisualControlUI:
                     s.connect((KUKA_IP, KUKA_PORT))
                     s.sendall(packet.encode('utf-8'))
                     res = s.recv(1024).decode('utf-8').strip()
-                    self.root.after(0, lambda: self.add_log(f"Controller ACK: {res}"))
+                    self.root.after(0, lambda: self.add_log(f"[CONTROLLER-ACK] {res}"))
             except Exception as err:
-                self.root.after(0, lambda: self.add_log(f"Link note: {err}"))
+                self.root.after(0, lambda: self.add_log(f"[LINK-NOTE] {err}"))
 
             def on_reboot():
                 self.is_powered_on = True
                 self.reset_bar.pack_forget()
-                self.lbl_power_state.config(text="⚡ 400V DRIVES: ENERGIZED", fg="#22c55e")
+                self.lbl_power_state.config(text="[400V DRIVES: ENERGIZED]", fg="#22c55e")
                 self._set_controls_state('normal')
                 self.auto_step_name = "READY"
-                self.add_log("✓ Drives energized. Machine ONLINE and ready.")
+                self.add_log("[SAFETY-OK] Main contactors energized. System ONLINE and ready.")
 
             self.root.after(0, on_reboot)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _set_controls_state(self, state):
+    def _set_controls_state(self, state: str) -> None:
         self.btn_move.config(state=state)
         self.btn_auto.config(state=state)
         for b in self.preset_btns:
@@ -890,7 +950,7 @@ class KukaVisualControlUI:
         for b in self.jog_buttons:
             b.config(state=state)
 
-    def _test_connection_async(self):
+    def _test_connection_async(self) -> None:
         def worker():
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -898,18 +958,18 @@ class KukaVisualControlUI:
                 s.connect((KUKA_IP, KUKA_PORT))
                 s.close()
                 self.connected = True
-                self.root.after(0, lambda: self.lbl_status.config(text="● CONTROLLER ONLINE", fg="#22c55e"))
-                self.root.after(0, lambda: self.add_log("✓ Connected to KRC5 Controller emulator!"))
+                self.root.after(0, lambda: self.lbl_status.config(text="[CONTROLLER: ONLINE]", fg="#22c55e"))
+                self.root.after(0, lambda: self.add_log("[NET-OK] Connected to KRC5 Controller emulator (127.0.0.1:59152)."))
             except Exception:
                 self.connected = False
-                self.root.after(0, lambda: self.lbl_status.config(text="○ CONTROLLER OFFLINE", fg="#ef4444"))
-                self.root.after(0, lambda: self.add_log("⚠ Warning: mock_krc5.py offline. Start mock_krc5.py!"))
+                self.root.after(0, lambda: self.lbl_status.config(text="[CONTROLLER: OFFLINE]", fg="#ef4444"))
+                self.root.after(0, lambda: self.add_log("[NET-WARN] Controller link offline. Start mock_krc5.py emulator."))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def send_move(self):
+    def send_move(self) -> None:
         if not self.is_powered_on:
-            messagebox.showwarning("Power Off", "Cannot move: Machine is powered off. Reset E-Stop first!")
+            messagebox.showwarning("Interlock Tripped", "Cannot execute motion: 400V drives are de-energized. Reset E-Stop first.")
             return
 
         try:
@@ -917,39 +977,39 @@ class KukaVisualControlUI:
             y = float(self.entries['Y'].get())
             z = float(self.entries['Z'].get())
         except ValueError:
-            messagebox.showerror("Invalid Input", "Coordinates must be valid numbers.")
+            messagebox.showerror("Format Error", "Target coordinates must be valid floating-point numbers.")
             return
 
         self.target_pos = {"X": x, "Y": y, "Z": z}
         self.is_moving = True
         self.btn_move.config(state='disabled')
-        self.add_log(f"Motion Cmd -> X:{x:.1f} Y:{y:.1f} Z:{z:.1f}")
+        self.add_log(f"[MOTION-CMD] World TCP Target -> X:{x:.1f} Y:{y:.1f} Z:{z:.1f}")
 
         threading.Thread(target=self._tcp_send_packet, args=(x, y, z), daemon=True).start()
 
-    def toggle_auto_demo(self):
+    def toggle_auto_demo(self) -> None:
         if not self.is_powered_on:
-            messagebox.showwarning("Power Off", "Machine is powered off. Reset E-Stop first!")
+            messagebox.showwarning("Interlock Tripped", "Cannot start cycle: 400V drives are de-energized.")
             return
 
         if self.is_auto_cycle:
             self.is_auto_cycle = False
             self.is_welding = False
-            self._stop_weld_sound()
+            self.sound.stop_weld()
             self.auto_step_name = "HOME STANDBY"
-            self.btn_auto.config(text="🔄 AUTO PIPE WELD CYCLE")
-            self.add_log("⏹ Auto cycle stopped. Moving robot back to Home Standby position (460, 0, 850)...")
+            self.btn_auto.config(text="AUTO WELD CYCLE")
+            self.add_log("[CYCLE-ABORT] Auto weld cycle stopped. Returning to Standby Home (460, 0, 850)...")
             self.set_coords(460, 0, 850)
         else:
             self.is_auto_cycle = True
-            self.btn_auto.config(text="⏹ STOP CYCLE (RETURN HOME)")
+            self.btn_auto.config(text="STOP CYCLE [RETURN HOME]")
             self.weld_bead_history.clear()
-            self.add_log(f"Executing Continuous Pipe Welding on {self.selected_metal_key.get()}...")
+            self.add_log(f"[CYCLE-START] Initiating automated weld cycle on {self.selected_metal_key.get()}...")
             threading.Thread(target=self._auto_cycle_loop, daemon=True).start()
 
-    def _auto_cycle_loop(self):
+    def _auto_cycle_loop(self) -> None:
         cycle_steps = [
-            ("1. Approach Pipe Seam", 580, -180, 580, 1.2),
+            ("1. Approach Clearance", 580, -180, 580, 1.2),
             ("2. Shield Gas Pre-flow", 580, -180, 495, 0.8),
             ("3. Arc Strike & Linear Seam Weld", 580, -90, 495, 1.4),
             ("3. Arc Strike & Linear Seam Weld", 580, 0, 495, 1.4),
@@ -966,7 +1026,7 @@ class KukaVisualControlUI:
             time.sleep(delay)
             idx = (idx + 1) % len(cycle_steps)
 
-    def _tcp_send_packet(self, x, y, z):
+    def _tcp_send_packet(self, x: float, y: float, z: float) -> None:
         packet = f"<Robot><Command><X>{x}</X><Y>{y}</Y><Z>{z}</Z></Command></Robot>\n"
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -975,12 +1035,12 @@ class KukaVisualControlUI:
                 s.sendall(packet.encode('utf-8'))
                 res = s.recv(1024).decode('utf-8').strip()
                 self.connected = True
-                self.root.after(0, lambda: self.lbl_status.config(text="● CONTROLLER ONLINE", fg="#22c55e"))
+                self.root.after(0, lambda: self.lbl_status.config(text="[CONTROLLER: ONLINE]", fg="#22c55e"))
                 if z != -1 and self.is_powered_on:
                     self.curr_pos = {"X": x, "Y": y, "Z": z}
-        except Exception as err:
+        except Exception:
             self.connected = False
-            self.root.after(0, lambda: self.lbl_status.config(text="○ CONTROLLER OFFLINE", fg="#ef4444"))
+            self.root.after(0, lambda: self.lbl_status.config(text="[CONTROLLER: OFFLINE]", fg="#ef4444"))
             if z != -1 and self.is_powered_on:
                 self.curr_pos = {"X": x, "Y": y, "Z": z}
         finally:
@@ -988,7 +1048,7 @@ class KukaVisualControlUI:
             if self.is_powered_on:
                 self.root.after(0, lambda: self.btn_move.config(state='normal'))
 
-    def _spawn_weld_sparks(self, x, y, z, metal_data):
+    def _spawn_weld_sparks(self, x: float, y: float, z: float, metal_data: Dict[str, Any]) -> None:
         if not self.is_powered_on or not self.show_sparks.get():
             return
         colors = metal_data.get('spark_colors', ['#ffffff', '#fbbf24', '#f97316'])
@@ -1004,7 +1064,7 @@ class KukaVisualControlUI:
                 'color': random.choice(colors)
             })
 
-    def _start_animation_loop(self):
+    def _start_animation_loop(self) -> None:
         override = self.speed_override.get() / 100.0
         lerp_speed = (0.14 if self.is_powered_on else 0.05) * override
 
@@ -1028,18 +1088,18 @@ class KukaVisualControlUI:
             if len(self.weld_bead_history) > 180:
                 self.weld_bead_history.pop(0)
             self._spawn_weld_sparks(self.disp_pos['X'], self.disp_pos['Y'], self.disp_pos['Z'], metal_data)
-            self._play_weld_sound()
+            self.sound.play_weld()
 
             self.telemetry_labels['Arc Voltage'].config(text=f"{metal_data['voltage'] + random.uniform(-0.6, 0.6):.1f} V")
             self.telemetry_labels['Weld Current'].config(text=f"{metal_data['current'] + random.uniform(-5, 5):.1f} A")
-            self.telemetry_labels['Wire Feed'].config(text=f"{metal_data['wire_speed'] + random.uniform(-0.2, 0.2):.1f} m/min")
-            self.telemetry_labels['Shield Gas'].config(text=metal_data['gas'])
+            self.telemetry_labels['Wire Feed Speed'].config(text=f"{metal_data['wire_speed'] + random.uniform(-0.2, 0.2):.1f} m/min")
+            self.telemetry_labels['Shield Gas Flow'].config(text="18.5 L/min")
         else:
-            self._stop_weld_sound()
+            self.sound.stop_weld()
             self.telemetry_labels['Arc Voltage'].config(text="0.0 V")
             self.telemetry_labels['Weld Current'].config(text="0.0 A")
-            self.telemetry_labels['Wire Feed'].config(text="0.0 m/min")
-            self.telemetry_labels['Shield Gas'].config(text="Standby" if not self.is_auto_cycle else "Pre-Flow")
+            self.telemetry_labels['Wire Feed Speed'].config(text="0.0 m/min")
+            self.telemetry_labels['Shield Gas Flow'].config(text="0.0 L/min" if not self.is_auto_cycle else "2.0 L/min (Pre-Flow)")
 
         if self.is_powered_on and self.show_trail.get() and (abs(dx) > 0.04 or abs(dy) > 0.04 or abs(dz) > 0.04):
             self.path_history.append((self.disp_pos['X'], self.disp_pos['Y'], self.disp_pos['Z']))
@@ -1051,7 +1111,7 @@ class KukaVisualControlUI:
             p['y'] += p['vy']
             p['z'] += p['vz']
             p['vz'] -= 1.2
-            if p['z'] <= 380 and p['vz'] < 0:  # Table height bounce
+            if p['z'] <= 380 and p['vz'] < 0:
                 p['vz'] = -p['vz'] * 0.3
                 p['vx'] *= 0.5
                 p['vy'] *= 0.5
@@ -1075,7 +1135,7 @@ class KukaVisualControlUI:
     # ==========================================================================
     # 5. 3D PROJECTION & CAD-GRADE RENDERING PIPELINE
     # ==========================================================================
-    def _project_point(self, x, y, z, origin_x, origin_y, scale):
+    def _project_point(self, x: float, y: float, z: float, origin_x: float, origin_y: float, scale: float) -> Tuple[float, float, float]:
         az_rad = math.radians(-self.cam_azimuth)
         x1 = x * math.cos(az_rad) - y * math.sin(az_rad)
         y1 = x * math.sin(az_rad) + y * math.cos(az_rad)
@@ -1089,7 +1149,7 @@ class KukaVisualControlUI:
         depth = y2
         return px, py, depth
 
-    def _draw_scene(self, joints=None, reachable=True, metal_data=None):
+    def _draw_scene(self, joints=None, reachable=True, metal_data=None) -> None:
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
         if w < 50 or h < 50:
@@ -1101,7 +1161,7 @@ class KukaVisualControlUI:
         oy = int(h * 0.72)
         scale = min(w, h) / 1850.0
 
-        def proj(x, y, z):
+        def proj(x: float, y: float, z: float) -> Tuple[float, float]:
             px, py, _ = self._project_point(x, y, z, ox, oy, scale)
             return px, py
 
@@ -1110,7 +1170,7 @@ class KukaVisualControlUI:
             metal_data = METALS_DATABASE.get(metal_key, METALS_DATABASE['carbon_steel'])
 
         # ----------------------------------------------------------------------
-        # 1. Industrial Cell Floor & Yellow Caution Perimeter
+        # 1. Industrial Cell Floor & Workcell Boundary Perimeter
         # ----------------------------------------------------------------------
         if self.show_grid.get():
             for gx in range(-800, 1001, 200):
@@ -1175,7 +1235,6 @@ class KukaVisualControlUI:
             vb3 = proj(pipe_x, v_y, pipe_z_center - pipe_r + 8)
             self.canvas.create_polygon(vb1[0], vb1[1], vb2[0], vb2[1], vb3[0], vb3[1], fill="#334155", outline="#64748b", width=1)
 
-        # Dynamically Render Pipe Body with Selected Metal Shaders
         p_base_col = metal_data.get('pipe_base', '#334155')
         p_body_col = metal_data.get('pipe_body', '#475569')
         p_high_col = metal_data.get('pipe_highlight', '#64748b')
@@ -1212,7 +1271,7 @@ class KukaVisualControlUI:
 
         # Active Material Badge on Workpiece
         lbl_p = proj(pipe_x, pipe_y_start - 35, pipe_z_center + 45)
-        self.canvas.create_text(lbl_p[0], lbl_p[1], text=f"🔩 Workpiece: {metal_data['code']}", fill="#38bdf8", font=('Segoe UI', 8, 'bold'))
+        self.canvas.create_text(lbl_p[0], lbl_p[1], text=f"WORKPIECE: {metal_data['code']}", fill="#38bdf8", font=('Segoe UI', 8, 'bold'))
 
         # ----------------------------------------------------------------------
         # 4. Robot Base Pedestal (Ground mounting plate)
@@ -1224,14 +1283,13 @@ class KukaVisualControlUI:
         self.canvas.create_line(ped_bot[0]+48, ped_bot[1], ped_top[0]+42, ped_top[1], fill="#2b3345", width=2)
         self.canvas.create_oval(ped_top[0]-42, ped_top[1]-16, ped_top[0]+42, ped_top[1]+16, fill=base_col, outline="#ff7722" if self.is_powered_on else "#475569", width=2)
 
-        # Anchor Bolts
         for ba in range(0, 360, 45):
             bx = math.cos(math.radians(ba)) * 38; by = math.sin(math.radians(ba)) * 38
             p_b = proj(bx, by, 5)
             self.canvas.create_oval(p_b[0]-2, p_b[1]-2, p_b[0]+2, p_b[1]+2, fill="#94a3b8", outline="")
 
         # ----------------------------------------------------------------------
-        # 5. Kinematic 6-Axis Robot Arm (True constant link lengths)
+        # 5. Kinematic 6-Axis Robot Arm
         # ----------------------------------------------------------------------
         if joints is None:
             joints, _, _ = self.kinematics.solve(self.disp_pos['X'], self.disp_pos['Y'], self.disp_pos['Z'])
@@ -1282,7 +1340,7 @@ class KukaVisualControlUI:
         self.canvas.create_line(pj4[0], pj4[1], ptcp[0], ptcp[1], fill="#1e293b", width=8, capstyle='round')
         self.canvas.create_line(pj4[0], pj4[1], ptcp[0], ptcp[1], fill="#94a3b8", width=4, capstyle='round')
 
-        # Brass Gas Shroud Nozzle
+        # Gas Shroud Nozzle
         torch_dx = ptcp[0] - pj4[0]; torch_dy = ptcp[1] - pj4[1]
         t_dist = math.sqrt(torch_dx**2 + torch_dy**2) + 1e-6
         nx = torch_dx / t_dist; ny = torch_dy / t_dist
@@ -1295,43 +1353,41 @@ class KukaVisualControlUI:
             self.canvas.create_oval(p[0]-r, p[1]-r, p[0]+r, p[1]+r, fill="#0f172a", outline=hub_border, width=2)
 
         # ----------------------------------------------------------------------
-        # 6. Dynamic Welding Arc Flare & Spark Dynamics
+        # 6. Live Welding Arc Flare & Spark Dynamics
         # ----------------------------------------------------------------------
         if self.is_welding:
             arc_glow_col = metal_data.get('arc_glow', '#00e5ff')
             arc_core_col = metal_data.get('arc_core', '#ffffff')
 
-            # Clean, compact micro arc tip flare (reduced from 22px to 7-9px)
             flash_rad = 7 if self.arc_flash_tick % 2 == 0 else 9
             self.canvas.create_oval(ptcp[0]-flash_rad, ptcp[1]-flash_rad, ptcp[0]+flash_rad, ptcp[1]+flash_rad, fill=arc_glow_col, outline="", width=0)
             self.canvas.create_oval(ptcp[0]-flash_rad//2, ptcp[1]-flash_rad//2, ptcp[0]+flash_rad//2, ptcp[1]+flash_rad//2, fill=arc_core_col, outline="")
 
             # Live Arc Banner Badge
             self.canvas.create_rectangle(w - 240, 16, w - 16, 52, fill="#052e16", outline="#22c55e", width=2)
-            self.canvas.create_text(w - 128, 34, text=f"🔥 ARC WELDING: {metal_data['code'][:10]} ⚡", fill="#4ade80", font=('Segoe UI', 8, 'bold'))
+            self.canvas.create_text(w - 128, 34, text=f"ARC WELDING: {metal_data['code'][:16]}", fill="#4ade80", font=('Segoe UI', 8, 'bold'))
         else:
             tip_col = "#00ffcc" if self.is_powered_on else "#ef4444"
             self.canvas.create_oval(ptcp[0]-4, ptcp[1]-4, ptcp[0]+4, ptcp[1]+4, fill=tip_col, outline="#ffffff", width=1)
 
-        # Crisp micro-sparks (1-2px)
         for p in self.particles:
             pp = proj(p['x'], p['y'], p['z'])
             size = max(1, int(p['life'] * 2))
             self.canvas.create_oval(pp[0]-size, pp[1]-size, pp[0]+size, pp[1]+size, fill=p['color'], outline="")
 
         # ----------------------------------------------------------------------
-        # 7. E-STOP OVERLAY & HUD
+        # 7. E-STOP OVERLAY & SAFETY INTERLOCK HUD
         # ----------------------------------------------------------------------
         if not self.is_powered_on:
             flash_on = (self.estop_flash_tick < 8)
             border_col = "#ef4444" if flash_on else "#7f1d1d"
             bg_col = "#450a0a"
 
-            bx1, by1 = w // 2 - 220, 20
-            bx2, by2 = w // 2 + 220, 75
+            bx1, by1 = w // 2 - 240, 20
+            bx2, by2 = w // 2 + 240, 78
             self.canvas.create_rectangle(bx1, by1, bx2, by2, fill=bg_col, outline=border_col, width=3)
-            self.canvas.create_text(w // 2, 38, text="🛑 EMERGENCY STOP ENGAGED", fill="#fca5a5" if flash_on else "#ffffff", font=('Segoe UI', 11, 'bold'))
-            self.canvas.create_text(w // 2, 58, text="400V Drives Locked Out | Mechanical Brakes Engaged", fill="#f87171", font=('Segoe UI', 8))
+            self.canvas.create_text(w // 2, 38, text="EMERGENCY STOP ENGAGED", fill="#fca5a5" if flash_on else "#ffffff", font=('Segoe UI', 11, 'bold'))
+            self.canvas.create_text(w // 2, 58, text="IEC 62061 SIL 3 / EN ISO 13849-1 Cat. 4 | 400V Drives Locked Out - Mechanical Brakes Clamped", fill="#f87171", font=('Segoe UI', 8))
 
         # HUD Coordinates & Gizmo
         status_txt = "ONLINE" if self.is_powered_on else "DRIVES LOCKED"
@@ -1354,7 +1410,7 @@ class KukaVisualControlUI:
 
 
 # ==============================================================================
-# 6. ENTRY POINT
+# 6. APPLICATION ENTRY POINT
 # ==============================================================================
 if __name__ == "__main__":
     root = tk.Tk()

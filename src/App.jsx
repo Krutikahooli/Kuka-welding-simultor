@@ -3,7 +3,7 @@ import ThreeViewport from './components/ThreeViewport';
 import TeachPendant from './components/TeachPendant';
 import { RobotKinematics } from './kinematics';
 import { METALS, WORKPIECE_SHAPES } from './materials';
-import { Volume2, VolumeX, Zap, Radio, Sun, Moon } from 'lucide-react';
+import { Volume2, VolumeX, Zap, Radio } from 'lucide-react';
 
 const kinematics = new RobotKinematics();
 
@@ -11,7 +11,6 @@ const kinematics = new RobotKinematics();
 const HOME_COORDS = { x: 450.0, y: 0.0, z: 600.0 };
 
 export default function App() {
-  const [theme, setTheme] = useState('dark'); // 'dark' | 'light'
   const [targetPos, setTargetPos] = useState(HOME_COORDS);
   const [dispPos, setDispPos] = useState(HOME_COORDS);
   const [jointAngles, setJointAngles] = useState({ A1: 0, A2: -26, A3: 94, A4: 0, A5: -68, A6: -108 });
@@ -27,9 +26,9 @@ export default function App() {
   const [cameraPreset, setCameraPreset] = useState(null);
   const [autoStepName, setAutoStepName] = useState('HOME STANDBY');
   const [logs, setLogs] = useState([
-    '⚡ KUKA KR CYBERTECH Workcell Initialized.',
-    '✓ Calibrated Normal Industrial Travel Speed Online.',
-    '✓ 10 Industrial Metals & 4 CAD Joint Shapes Ready.'
+    '[INIT] KUKA KR CYBERTECH Workcell Initialized.',
+    '[SYS] Calibrated Normal Industrial Travel Speed Online.',
+    '[SYS] 10 Industrial Metallurgy Profiles & 4 CAD Joint Shapes Active.'
   ]);
 
   // KRL Code Script Execution Engine State
@@ -49,21 +48,6 @@ export default function App() {
       addLog(`Selected Workpiece Joint: ${WORKPIECE_SHAPES[selectedShapeKey].name}`);
     }
   }, [selectedShapeKey]);
-
-  // Sync Body Theme Class
-  useEffect(() => {
-    if (theme === 'light') {
-      document.body.classList.add('theme-light');
-    } else {
-      document.body.classList.remove('theme-light');
-    }
-  }, [theme]);
-
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    addLog(`Theme changed to: ${next.toUpperCase()} MODE`);
-  };
 
   const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
@@ -164,14 +148,14 @@ export default function App() {
     setAutoStepName('E-STOPPED');
     stopWeldSound();
     playEstopSound();
-    addLog('🛑 [E-STOP ENGAGED] 400V Drive Power Cut! Mechanical Brakes Clamped.');
+    addLog('[SAFETY-ESTOP] Emergency Stop Engaged: 400V Main Contactors Open! Mechanical Brakes Clamped.');
   };
 
   // Power-On Safety Reset
   const resetPowerOn = () => {
     setIsPoweredOn(true);
     setAutoStepName('READY');
-    addLog('🟢 [SAFETY RESET] Main contactors energized. Machine ONLINE.');
+    addLog('[SAFETY-RESET] Safety circuit interlocks reset. 400V Drives ENERGIZED.');
   };
 
   // Toggle Auto Cycle with Instant Return to Home
@@ -183,12 +167,12 @@ export default function App() {
       setIsWelding(false);
       stopWeldSound();
       setAutoStepName('HOME STANDBY');
-      addLog('⏹ Auto cycle stopped. Moving robot back to Natural Home Standby (450, 0, 600)...');
+      addLog('[CYCLE-ABORT] Automatic cycle halted. Moving robot to Standby Home (450, 0, 600)...');
       setTargetPos(HOME_COORDS);
     } else {
       setIsAutoCycle(true);
       const activeShape = WORKPIECE_SHAPES[selectedShapeKey] || WORKPIECE_SHAPES.circle_pipe;
-      addLog(`Executing Normal Speed Auto Weld on ${activeShape.name} (${METALS[selectedMetalKey].name})...`);
+      addLog(`[CYCLE-START] Executing automated weld cycle on ${activeShape.name} (${METALS[selectedMetalKey].name})...`);
     }
   };
 
@@ -286,7 +270,7 @@ export default function App() {
 
     setIsScriptRunning(false);
     scriptExecutionRef.current.isRunning = false;
-    addLog('✓ KRL Program Execution Completed.');
+    addLog('[KRL-COMPLETE] KRL Program Execution Finished.');
   };
 
   const stopKrlScript = () => {
@@ -294,7 +278,7 @@ export default function App() {
     scriptExecutionRef.current.isRunning = false;
     setIsWelding(false);
     stopWeldSound();
-    addLog('⏹ KRL Program Stopped. Returning to Natural Home Standby...');
+    addLog('[KRL-HALT] KRL Program Aborted. Returning to Standby Home...');
     setTargetPos(HOME_COORDS);
   };
 
@@ -401,17 +385,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Status Indicators & Theme Switcher */}
+        {/* Status Indicators */}
         <div className="header-status-box">
-          <button
-            onClick={toggleTheme}
-            className="status-badge theme-btn"
-            title="Toggle Light / Dark Studio Theme"
-          >
-            {theme === 'dark' ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-sky-500" />}
-            <span>{theme === 'dark' ? '☀️ LIGHT THEME' : '🌙 DARK THEME'}</span>
-          </button>
-
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             className="status-badge"
@@ -445,7 +420,6 @@ export default function App() {
             autoStepName={autoStepName}
             cameraPreset={cameraPreset}
             setCameraPreset={setCameraPreset}
-            theme={theme}
           />
         </div>
 
