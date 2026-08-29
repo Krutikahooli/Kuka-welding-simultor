@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { Flame } from 'lucide-react';
 import { METALS, WORKPIECE_SHAPES } from '../materials';
 import { RobotKinematics } from '../kinematics';
 
@@ -36,8 +37,7 @@ export default function ThreeViewport({
   speedOverride,
   autoStepName,
   cameraPreset,
-  setCameraPreset,
-  theme
+  setCameraPreset
 }) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
@@ -67,10 +67,9 @@ export default function ThreeViewport({
     const width = container.clientWidth || window.innerWidth - 460;
     const height = container.clientHeight || window.innerHeight - 56;
 
-    // 1. Scene & Background
+    // 1. Scene & Background (Permanent Industrial Light Studio)
     const scene = new THREE.Scene();
-    const isLight = theme === 'light';
-    const bgCol = new THREE.Color(isLight ? 0xe2e8f0 : 0x131926);
+    const bgCol = new THREE.Color(0xf1f5f9);
     scene.background = bgCol;
     scene.fog = new THREE.FogExp2(bgCol, 0.0003);
     sceneRef.current = scene;
@@ -119,9 +118,9 @@ export default function ThreeViewport({
     // 4. Floor & Industrial Grid
     const floorGeo = new THREE.PlaneGeometry(3200, 3200);
     const floorMat = new THREE.MeshStandardMaterial({
-      color: isLight ? 0xcfd8dc : 0x161d2b,
-      roughness: 0.7,
-      metalness: 0.3
+      color: 0xcfd8dc,
+      roughness: 0.75,
+      metalness: 0.15
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
@@ -129,7 +128,7 @@ export default function ThreeViewport({
     scene.add(floor);
     floorMeshRef.current = floor;
 
-    const gridHelper = new THREE.GridHelper(3200, 32, isLight ? 0x0284c7 : 0x38bdf8, isLight ? 0xb0bec5 : 0x243048);
+    const gridHelper = new THREE.GridHelper(3200, 32, 0x0284c7, 0xb0bec5);
     gridHelper.position.y = 0.5;
     scene.add(gridHelper);
 
@@ -445,19 +444,6 @@ export default function ThreeViewport({
     };
   }, []);
 
-  // Update Theme Colors in Scene
-  useEffect(() => {
-    if (!sceneRef.current) return;
-    const isLight = theme === 'light';
-    const bgCol = new THREE.Color(isLight ? 0xe2e8f0 : 0x131926);
-    sceneRef.current.background = bgCol;
-    sceneRef.current.fog.color = bgCol;
-
-    if (floorMeshRef.current) {
-      floorMeshRef.current.material.color = new THREE.Color(isLight ? 0xcfd8dc : 0x161d2b);
-    }
-  }, [theme]);
-
   // Re-build Workpiece Geometry on Shape or Metal Selection (at Table Top Y=280)
   useEffect(() => {
     if (!wpGroupRef.current) return;
@@ -490,7 +476,7 @@ export default function ThreeViewport({
     wpGroup.add(basePlate);
 
     if (selectedShapeKey === 'square_box') {
-      // ⏹️ Square Box Section (124x124mm, 45mm tall)
+      // Square Box Section (124x124mm, 45mm tall)
       const box = new THREE.Mesh(new THREE.BoxGeometry(124, 45, 124), pbrMat);
       box.position.y = 36.5;
       box.castShadow = true;
@@ -508,7 +494,7 @@ export default function ThreeViewport({
         wpGroup.add(seamEdge);
       }
     } else if (selectedShapeKey === 't_fillet') {
-      // 📐 Vertical T-Joint Gusset Plate (200x65x12mm)
+      // Vertical T-Joint Gusset Plate (200x65x12mm)
       const gusset = new THREE.Mesh(new THREE.BoxGeometry(200, 65, 12), pbrMat);
       gusset.position.y = 46.5;
       gusset.castShadow = true;
@@ -525,7 +511,7 @@ export default function ThreeViewport({
       seamR.rotation.z = Math.PI / 2;
       wpGroup.add(seamR);
     } else if (selectedShapeKey === 'hex_flange') {
-      // 🔷 Hexagonal Flange (R=66mm outer prism)
+      // Hexagonal Flange (R=66mm outer prism)
       const hex = new THREE.Mesh(new THREE.CylinderGeometry(66, 66, 45, 6), pbrMat);
       hex.position.y = 36.5;
       hex.castShadow = true;
@@ -537,7 +523,7 @@ export default function ThreeViewport({
       seamHex.rotation.x = Math.PI / 2;
       wpGroup.add(seamHex);
     } else {
-      // ⭕ Circular Pipe Collar (Outer Wall R=64mm, Outside Fillet Seam R=72mm)
+      // Circular Pipe Collar (Outer Wall R=64mm, Outside Fillet Seam R=72mm)
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(64, 64, 50, 48, 1, true), pbrMat);
       ring.position.y = 39;
       ring.castShadow = true;
@@ -758,10 +744,10 @@ export default function ThreeViewport({
       {/* Camera Preset Quick Buttons */}
       <div className="viewport-camera-toolbar">
         {[
-          { label: '🧊 ISO', id: 'ISO' },
-          { label: '⬆️ TOP', id: 'TOP' },
-          { label: '➡️ FRONT', id: 'FRONT' },
-          { label: '↗️ SIDE', id: 'SIDE' }
+          { label: 'ISO', id: 'ISO' },
+          { label: 'TOP', id: 'TOP' },
+          { label: 'FRONT', id: 'FRONT' },
+          { label: 'SIDE', id: 'SIDE' }
         ].map((btn) => (
           <button
             key={btn.id}
@@ -776,7 +762,7 @@ export default function ThreeViewport({
       {/* Welding Active Banner */}
       {isWelding && isPoweredOn && (
         <div className="welding-active-badge">
-          <span>🔥</span>
+          <Flame size={14} className="text-amber-400" />
           <span className="welding-text">
             ARC WELDING: {metalData.code} ({shapeData.name})
           </span>

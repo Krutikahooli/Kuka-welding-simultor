@@ -37,15 +37,15 @@ export default function TeachPendant({
   const activeMetal = METALS[selectedMetalKey] || METALS.carbon_steel;
   const activeShape = WORKPIECE_SHAPES[selectedShapeKey] || WORKPIECE_SHAPES.circle_pipe;
 
-  // Calibrated Collision-Free Presets
+  // Calibrated Collision-Free Presets (Industrial Calibration)
   const presets = [
-    { label: '🏠 Standby Home', x: 450, y: 0, z: 600 },
-    { label: '🎯 High Clearance Approach', x: 620, y: -72, z: 460 },
-    { label: '🔥 Seam South (0°)', x: 620, y: -72, z: 298 },
-    { label: '🔥 Seam East (90°)', x: 692, y: 0, z: 298 },
-    { label: '🔥 Seam North (180°)', x: 620, y: 72, z: 298 },
-    { label: '🔥 Seam West (270°)', x: 548, y: 0, z: 298 },
-    { label: '🧹 Clean Station', x: 260, y: 380, z: 580 }
+    { label: 'P1: STANDBY HOME', x: 450, y: 0, z: 600 },
+    { label: 'P2: HIGH APPROACH', x: 620, y: -72, z: 460 },
+    { label: 'P3: SEAM SECTOR 0°', x: 620, y: -72, z: 298 },
+    { label: 'P4: SEAM SECTOR 90°', x: 692, y: 0, z: 298 },
+    { label: 'P5: SEAM SECTOR 180°', x: 620, y: 72, z: 298 },
+    { label: 'P6: SEAM SECTOR 270°', x: 548, y: 0, z: 298 },
+    { label: 'P7: TORCH CLEAN STATION', x: 260, y: 380, z: 580 }
   ];
 
   // Calculate reach distance from shoulder pivot to detect max extension
@@ -161,8 +161,8 @@ export default function TeachPendant({
                         borderRadius: '4px',
                         border: 'none',
                         cursor: 'pointer',
-                        background: jogStep === s ? '#0284c7' : '#1e293b',
-                        color: jogStep === s ? '#ffffff' : '#94a3b8'
+                        background: jogStep === s ? '#0284c7' : 'var(--bg-tertiary)',
+                        color: jogStep === s ? '#ffffff' : 'var(--text-muted)'
                       }}
                     >
                       {s}mm
@@ -264,33 +264,33 @@ export default function TeachPendant({
               <div style={{ display: 'flex', gap: '4px' }}>
                 <button
                   onClick={() => loadKrlTemplate('circle_pipe')}
-                  style={{ fontSize: '9px', background: '#1e293b', color: '#38bdf8', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(56, 189, 248, 0.3)', cursor: 'pointer' }}
+                  style={{ fontSize: '9px', background: 'var(--bg-tertiary)', color: '#0284c7', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(2, 132, 199, 0.3)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                  ⭕ Pipe
+                  PIPE (ASME)
                 </button>
                 <button
                   onClick={() => loadKrlTemplate('square_box')}
-                  style={{ fontSize: '9px', background: '#1e293b', color: '#f59e0b', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.3)', cursor: 'pointer' }}
+                  style={{ fontSize: '9px', background: 'var(--bg-tertiary)', color: '#d97706', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(217, 119, 6, 0.3)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                  ⏹️ Square
+                  BOX (AWS)
                 </button>
                 <button
                   onClick={() => loadKrlTemplate('t_fillet')}
-                  style={{ fontSize: '9px', background: '#1e293b', color: '#34d399', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(52, 211, 153, 0.3)', cursor: 'pointer' }}
+                  style={{ fontSize: '9px', background: 'var(--bg-tertiary)', color: '#16a34a', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(22, 163, 74, 0.3)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                  📐 T-Joint
+                  T-GUSSET (ISO)
                 </button>
                 <button
                   onClick={() => loadKrlTemplate('hex_flange')}
-                  style={{ fontSize: '9px', background: '#1e293b', color: '#c084fc', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(192, 132, 252, 0.3)', cursor: 'pointer' }}
+                  style={{ fontSize: '9px', background: 'var(--bg-tertiary)', color: '#9333ea', padding: '3px 6px', borderRadius: '4px', border: '1px solid rgba(147, 51, 234, 0.3)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                  🔷 Hex
+                  HEX (DIN)
                 </button>
               </div>
             </div>
 
             {/* Code Editor Box */}
-            <div style={{ background: '#07090e', borderRadius: '10px', border: '1px solid var(--border-color)', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ background: 'var(--bg-primary)', borderRadius: '10px', border: '1px solid var(--border-color)', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px', fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>
                 <span>PROGRAM: {activeShape.id.toUpperCase()}_WELD.SRC</span>
                 <span>STATUS: {isScriptRunning ? `LINE ${currentScriptLine + 1}` : 'IDLE'}</span>
@@ -345,9 +345,9 @@ export default function TeachPendant({
                 disabled={!isPoweredOn}
                 style={{
                   padding: '10px 14px',
-                  background: '#1e293b',
-                  color: '#38bdf8',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  background: 'var(--bg-tertiary)',
+                  color: '#0284c7',
+                  border: '1px solid rgba(2, 132, 199, 0.3)',
                   borderRadius: '8px',
                   fontWeight: 800,
                   fontSize: '11px',
